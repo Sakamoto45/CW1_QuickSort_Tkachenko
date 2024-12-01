@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-const block = 500000
+const block = 500
 
 func NewParallelQuickSorter(numWorkers int) *ParallelQuickSorter {
 	sorter := &ParallelQuickSorter{
@@ -27,40 +27,49 @@ type ParallelQuickSorter struct {
 
 	workersLeft  [][]int
 	workersRight [][]int
+	resultLeft   []int
+	resultRight  []int
 }
 
 func (sorter *ParallelQuickSorter) Sort(array []int) []int {
 	for i := range sorter.numWorkers {
-		sorter.workersLeft[i] = make([]int, 0, len(array))
-		sorter.workersRight[i] = make([]int, 0, len(array))
+		sorter.workersLeft[i] = make([]int, 0, len(array)/sorter.numWorkers)
+		sorter.workersRight[i] = make([]int, 0, len(array)/sorter.numWorkers)
 	}
+	sorter.resultLeft = make([]int, 0, len(array))
+	sorter.resultRight = make([]int, 0, len(array))
 
-	return sorter.sort(array)
+	sorter.sort(array)
+	return array
 }
 
-func (sorter *ParallelQuickSorter) sort(a []int) []int {
+func (sorter *ParallelQuickSorter) sort(a []int) {
 	if len(a) < 2 {
-		return a
+		return
 	}
 
 	if len(a) < block {
 		sequential.NewSequentialQuickSorter().Sort(a)
-		return a
+		return
 	}
 
 	pivot := a[len(a)-1]
 
 	left, right := sorter.parallelFilter(a, pivot)
 
-	left = sorter.sort(left)
-	right = sorter.sort(right)
+	l := len(left)
+	r := len(right)
+	middleSize := len(a) - l - r
 
-	middleSize := len(a) - len(left) - len(right)
+	a = a[:0]
+	a = append(a, left...)
 	for range middleSize {
-		left = append(left, pivot)
+		a = append(a, pivot)
 	}
+	a = append(a, right...)
 
-	return append(left, right...)
+	sorter.sort(a[:l])
+	sorter.sort(a[l+middleSize:])
 }
 
 // parallel filter optimized for this task
@@ -68,8 +77,8 @@ func (sorter *ParallelQuickSorter) parallelFilter(nums []int, pivot int) ([]int,
 	n := len(nums)
 	chunkSize := n / sorter.numWorkers
 
-	resultLeft := make([]int, 0, n)
-	resultRight := make([]int, 0, n)
+	sorter.resultLeft = sorter.resultLeft[:0]
+	sorter.resultRight = sorter.resultRight[:0]
 
 	for i := 0; i < sorter.numWorkers; i++ {
 		start := i * chunkSize
@@ -84,6 +93,7 @@ func (sorter *ParallelQuickSorter) parallelFilter(nums []int, pivot int) ([]int,
 			left = left[:0]
 			right := sorter.workersRight[id]
 			right = right[:0]
+
 			for j := start; j < end; j++ {
 				if nums[j] < pivot {
 					left = append(left, nums[j])
@@ -93,13 +103,12 @@ func (sorter *ParallelQuickSorter) parallelFilter(nums []int, pivot int) ([]int,
 			}
 
 			sorter.mu.Lock()
-			resultLeft = append(resultLeft, left...)
-			resultRight = append(resultRight, right...)
+			sorter.resultLeft = append(sorter.resultLeft, left...)
+			sorter.resultRight = append(sorter.resultRight, right...)
 			sorter.mu.Unlock()
-
 		}(start, end, i)
 	}
 
 	sorter.wg.Wait()
-	return resultLeft, resultRight
+	return sorter.resultLeft, sorter.resultRight
 }
